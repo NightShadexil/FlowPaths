@@ -1,0 +1,34 @@
+# Arquivos de IDE (Android Studio, IntelliJ IDEA)
+.idea/
+*.iws
+*.iml
+*.ipr
+/captures
+
+# Arquivos de Build e Compilação
+/local.properties
+/build/
+.gradle/
+.DS_Store
+
+# Diretórios Gerados pelo Gradle e pelo Android
+/app/build/
+/app/local.properties
+/gradle/wrapper/gradle-wrapper.properties
+
+# Ficheiros de Debug/Release e APKs
+*.apk
+*.aab
+*.aar
+*.iml
+.cxx/
+.externalNativeBuild/
+
+# Arquivos de Logs e Caches de Teste
+*.log
+/data/
+/out/
+/report/
+
+# Ignorar as dependências globais (se usar)
+/vendor/
