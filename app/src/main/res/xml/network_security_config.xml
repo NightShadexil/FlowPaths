@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+
+    <!--
+    Configuração base.
+    Bloqueia tráfego não encriptado (http) por defeito.
+    Confia apenas nas CAs (Autoridades de Certificação) do sistema.
+    -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!--
+    💡 A CORREÇÃO ESTÁ AQUI.
+    Adicionamos uma configuração de domínio específica para o seu
+    projeto Supabase, permitindo que a app confie nele.
+    -->
+    <domain-config cleartextTrafficPermitted="false">
+        <!-- O domínio exato do seu URL do Supabase (visto no LogCat) -->
+        <domain includeSubdomains="true">tqnmdoxctjvsneqeyzke.supabase.co</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+
+    <!-- Pode ter outras configurações de domínio aqui (ex: para APIs, etc.) -->
+
+</network-security-config>

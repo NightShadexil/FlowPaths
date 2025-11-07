@@ -30,5 +30,8 @@
 /out/
 /report/
 
+# Store user-specific settings for Android Studio and SDK locations.
+local.properties
+
 # Ignorar as dependências globais (se usar)
 /vendor/
