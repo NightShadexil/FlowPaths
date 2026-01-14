@@ -1,12 +1,7 @@
 package com.example.flowpaths
 
 import android.app.Application
-import com.example.flowpaths.data.remote.GeminiMoodAnalyzer
-import com.example.flowpaths.ui.auth.AuthViewModel
-import com.example.flowpaths.viewmodel.MapViewModel
-import com.example.flowpaths.viewmodel.MoodViewModel
-import com.example.flowpaths.viewmodel.ProfileViewModel
-import com.example.flowpaths.viewmodel.SessionViewModel
+import com.example.flowpaths.di.appModule
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.gotrue.Auth
@@ -19,17 +14,14 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import io.github.jan.supabase.annotations.SupabaseInternal
+import io.github.jan.supabase.serializer.KotlinXSerializer
+import io.ktor.client.engine.okhttp.OkHttp
 
-// Imports do Koin
+// ✅ IMPORTS CORRETOS DO KOIN
 import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
-import org.koin.androidx.viewmodel.dsl.viewModel
-import org.koin.core.context.GlobalContext.startKoin
-import org.koin.dsl.module
-
-import android.content.Context
-import com.example.flowpaths.data.location.FlowPathsLocationManager
-import org.koin.android.ext.koin.androidApplication
+import org.koin.core.context.startKoin
+import org.koin.core.logger.Level
 
 class FlowPathsApplication : Application() {
 
@@ -38,39 +30,17 @@ class FlowPathsApplication : Application() {
             private set
     }
 
-    // 💡 MÓDULO DO KOIN (CORRIGIDO: MapViewModel como 'single' para persistência)
-    val appModule = module {
-        // Serviços e Singletons
-        single { supabaseClient }
-        single { GeminiMoodAnalyzer() }
-        single<Context> { androidApplication() }
-
-        // Location Manager como Singleton (necessário para o MapViewModel)
-        single { FlowPathsLocationManager(get()) }
-
-        // ViewModels
-        viewModel { AuthViewModel() }
-        viewModel { ProfileViewModel() }
-        viewModel { MoodViewModel(get()) }
-        viewModel { SessionViewModel(get()) }
-
-        // 🚨 CORREÇÃO CRÍTICA: O MapViewModel DEVE ser um 'single' (singleton)
-        // se o seu estado (currentRoute) precisar de persistir e ser partilhado
-        // entre diferentes ecrãs Compose (MainScreen e MoodAnalysisScreen).
-        single { MapViewModel(get()) } // <-- Agora um SINGLETON
-    }
-
     override fun onCreate() {
         super.onCreate()
 
-        // 1. Inicializar o Supabase (TEM de vir antes do Koin)
+        // 1. Inicializar Supabase
         initializeSupabase()
 
-        // 2. INICIALIZAR O KOIN
+        // 2. Inicializar Koin
         startKoin {
-            androidLogger()
+            androidLogger(Level.ERROR)
             androidContext(this@FlowPathsApplication)
-            modules(appModule) // Carrega as definições
+            modules(appModule)
         }
     }
 
@@ -80,7 +50,36 @@ class FlowPathsApplication : Application() {
             supabaseUrl = BuildConfig.SUPABASE_URL,
             supabaseKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY
         ) {
-            install(Auth)
+            // 1. Define explicitamente o serializer para ser "tolerante"
+            defaultSerializer = KotlinXSerializer(Json {
+                ignoreUnknownKeys = true // <--- ESTA LINHA É A CHAVE MESTRA
+                isLenient = true
+                encodeDefaults = true
+                prettyPrint = true
+                coerceInputValues = true // Ajuda a converter nulos para valores default se necessário
+            })
+
+            // 2. Configura o motor Ktor explicitamente (Ktor 3 style)
+            httpEngine = OkHttp.create()
+
+            // 3. Configurações de Timeout (para evitar o erro que tinhas antes)
+            httpConfig {
+                install(io.ktor.client.plugins.HttpTimeout) {
+                    requestTimeoutMillis = 60000 // 60 segundos
+                    connectTimeoutMillis = 60000
+                    socketTimeoutMillis = 60000
+                }
+                // Log para veres o erro real se crashar outra vez
+                install(io.ktor.client.plugins.logging.Logging) {
+                    level = io.ktor.client.plugins.logging.LogLevel.ALL
+                }
+            }
+
+            install(Auth) {
+                // Configurar o esquema de URL para redirecionamento após login
+                scheme = "flowpaths" // Deve corresponder ao AndroidManifest.xml
+                host = "auth-callback" // Parte final do URL de redirecionamento
+            }
             install(Postgrest)
             install(Storage)
             install(Realtime)

@@ -12,6 +12,15 @@
 #   public *;
 #}
 
+# Mantém todas as classes do Spotify App Remote intactas
+-keep class com.spotify.** { *; }
+-keep interface com.spotify.** { *; }
+-dontwarn com.spotify.**
+
+# Garante que o GSON (usado pelo Spotify internamente) funciona
+-keep class com.google.gson.** { *; }
+-keep interface com.google.gson.** { *; }
+
 # Uncomment this to preserve the line number information for
 # debugging stack traces.
 #-keepattributes SourceFile,LineNumberTable

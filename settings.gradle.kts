@@ -12,6 +12,10 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
 
+        flatDir {
+            dirs("app/libs")
+        }
+
         // Repositório especial para Gemini
         //maven { setUrl("https://maven.google.com/ai") }
 

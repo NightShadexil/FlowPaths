@@ -1,20 +1,26 @@
 package com.example.flowpaths.ui.screens
 
+import android.Manifest
+import android.app.Activity
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.util.Log
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Hiking
-import androidx.compose.material.icons.filled.Mood
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.key
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -24,383 +30,356 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavController
-
-import android.Manifest
-import android.content.pm.PackageManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-
+import androidx.navigation.NavController
+import coil.compose.AsyncImage
 import com.example.flowpaths.R
+import com.example.flowpaths.data.models.DesafioBemEstar
+import com.example.flowpaths.data.models.TipoDesafio
+import com.example.flowpaths.data.states.RouteTrackingState
 import com.example.flowpaths.ui.navigation.Routes
 import com.example.flowpaths.ui.theme.LightGrayBackground
 import com.example.flowpaths.ui.theme.WhiteBackground
 import com.example.flowpaths.viewmodel.MapViewModel
-import com.example.flowpaths.viewmodel.RouteTrackingState
 import com.google.android.gms.maps.CameraUpdateFactory
-import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.LatLng
-import com.google.maps.android.compose.GoogleMap
-import com.google.maps.android.compose.MapUiSettings
-import com.google.maps.android.compose.Marker
-import com.google.android.gms.maps.model.MarkerOptions
-import com.google.maps.android.compose.MarkerState
-import com.google.maps.android.compose.Polyline
-import com.google.maps.android.compose.rememberCameraPositionState
-
+import com.google.android.gms.maps.model.*
+import com.google.maps.android.compose.*
+import kotlinx.coroutines.delay
 import org.koin.androidx.compose.koinViewModel
-import com.google.maps.android.compose.MapType
-import com.google.maps.android.compose.MapProperties
 
-
-/**
- * O Ecrã Principal (Dashboard) que mostra o mapa e os botões de ação.
- */
 @Composable
-fun MainScreen(
-    navController: NavController,
-    mapViewModel: MapViewModel = koinViewModel()
-) {
-    // 1. Observar Estados
+fun MainScreen(navController: NavController) {
+    val context = LocalContext.current
+    val activity = context as? ComponentActivity
+
+    val mapViewModel: MapViewModel = koinViewModel(
+        viewModelStoreOwner = activity ?: checkNotNull(context as? ComponentActivity) {
+            "MainScreen precisa de um contexto ComponentActivity"
+        }
+    )
+
+    // Estados
     val currentRoute by mapViewModel.currentRoute.collectAsState()
     val trackingState by mapViewModel.trackingState.collectAsState()
     val userLocation by mapViewModel.userCurrentLocation.collectAsState()
-    val context = LocalContext.current
+    val directionsPolyline by mapViewModel.directionsPolyline.collectAsState()
+    val approachPolyline by mapViewModel.approachPolyline.collectAsState()
+    val activeChallenge by mapViewModel.activeChallenge.collectAsState()
+    val navInstruction by mapViewModel.navigationInstruction.collectAsState()
+    val timerSeconds by mapViewModel.timerSeconds.collectAsState()
+    val totalTime by mapViewModel.totalChallengeSeconds.collectAsState()
+    val nextWaypointIndex by mapViewModel.nextWaypointIndex.collectAsState()
+    val weatherInfo by mapViewModel.weatherInfo.collectAsState()
+    val spotifyState by mapViewModel.spotifyState.collectAsState()
 
-    LaunchedEffect(Unit) {
-        Log.d("MAP_VM_CHECK", "MainScreen iniciado. Estado inicial: $trackingState")
-    }
+    var isRecording by remember { mutableStateOf(false) }
 
-    // DEBUG: Confirma a leitura do estado na recomposição
-    LaunchedEffect(currentRoute) {
-        Log.d(
-            "ROUTE_STATE_CHECK",
-            "Recomposição de currentRoute: ${if (currentRoute != null) "OK: ${currentRoute?.pontosChave?.size} pontos" else "NULL"}"
-        )
-    }
+    val isRouteActive = trackingState is RouteTrackingState.RouteGenerated ||
+            trackingState is RouteTrackingState.TrackingActive
 
-    // Coordenadas de exemplo (Lisboa, Portugal) e localização fictícia (Mountain View)
-    val defaultLocation = LatLng(38.7223, -9.1393)
-    val mountainViewLocation = LatLng(37.4219983, -122.0840000)
-
-    // Estado da câmara do mapa
     val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(defaultLocation, 12f)
+        position = CameraPosition.fromLatLngZoom(LatLng(41.26, -8.62), 15f)
     }
 
-    // --- Lógica de Permissões ---
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
+    var isFollowingUser by remember { mutableStateOf(false) }
+    var hasCenteredOnUser by remember { mutableStateOf(false) }
+    var isMapLoaded by remember { mutableStateOf(false) }
+
+    // Launcher Foto
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        if (bitmap != null && activeChallenge != null) {
+            mapViewModel.completeChallengeWithPhoto(activeChallenge!!, bitmap)
+        }
+    }
+
+    // Permissões
+    fun checkPermissions(): Boolean {
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED
+    }
+
+    var hasLocationPermission by remember { mutableStateOf(checkPermissions()) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val granted = permissions.getOrDefault(Manifest.permission.ACCESS_FINE_LOCATION, false) ||
-                permissions.getOrDefault(Manifest.permission.ACCESS_COARSE_LOCATION, false)
-
-        if (granted) mapViewModel.startRouteTracking()
-        else Log.d("LOCATION", "Permissão de localização negada.")
+        val isGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true
+        hasLocationPermission = isGranted
+        if (isGranted) mapViewModel.startLocationUpdates()
     }
 
-    fun checkAndRequestLocationPermissions() {
-        val fineLocationGranted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-
-        val coarseLocationGranted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-
-        if (fineLocationGranted || coarseLocationGranted) mapViewModel.startRouteTracking()
-        else locationPermissionLauncher.launch(
-            arrayOf(
+    LaunchedEffect(Unit) {
+        if (!checkPermissions()) {
+            permissionLauncher.launch(arrayOf(
                 Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            )
-        )
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.RECORD_AUDIO // Para o áudio interno
+            ))
+        } else {
+            mapViewModel.startLocationUpdates()
+        }
     }
-    // --- Fim Lógica de Permissões ---
 
+    // Zoom Automático
+    LaunchedEffect(directionsPolyline, isMapLoaded) {
+        if (isMapLoaded && !mapViewModel.hasCenteredRoute && !directionsPolyline.isNullOrEmpty()) {
+            try {
+                isFollowingUser = false
+                delay(100)
+                val builder = LatLngBounds.builder()
+                directionsPolyline!!.forEach { builder.include(it) }
+                cameraPositionState.animate(CameraUpdateFactory.newLatLngBounds(builder.build(), 200), 1500)
+                mapViewModel.hasCenteredRoute = true
+                hasCenteredOnUser = true
+            } catch (e: Exception) { Log.e("MainScreen", "Erro zoom: ${e.message}") }
+        }
+    }
 
-    // 2. Efeito para redirecionar após terminar o percurso
-    LaunchedEffect(trackingState) {
-        if (trackingState is RouteTrackingState.TrackingCompleted) {
-            // Isto assume que o RouteSummaryScreen foi adicionado ao NavHost
-            navController.navigate(Routes.ROUTE_SUMMARY) {
-                popUpTo(Routes.PRIVATE_DASHBOARD) { inclusive = false }
+    // Centrar User
+    LaunchedEffect(userLocation) {
+        userLocation?.let { loc ->
+            mapViewModel.onLocationUpdate(loc)
+            if (isMapLoaded && !hasCenteredOnUser && directionsPolyline.isNullOrEmpty()) {
+                cameraPositionState.move(CameraUpdateFactory.newLatLngZoom(LatLng(loc.latitude, loc.longitude), 17f))
+                hasCenteredOnUser = true
+            }
+            if (isFollowingUser) {
+                cameraPositionState.animate(CameraUpdateFactory.newLatLngZoom(LatLng(loc.latitude, loc.longitude), 18f), 500)
             }
         }
     }
 
-
-    // Configurações da UI do Mapa
-    val uiSettings = MapUiSettings(
-        zoomControlsEnabled = true,
-        compassEnabled = false,
-        mapToolbarEnabled = false,
-        myLocationButtonEnabled = false,
-        scrollGesturesEnabled = true,
-        zoomGesturesEnabled = true,
-        tiltGesturesEnabled = false,
-        rotationGesturesEnabled = false
-    )
-
-    // 3. Lógica Condicional para o Botão Principal
-    val (buttonText, buttonAction) = when (trackingState) {
-        is RouteTrackingState.TrackingActive -> {
-            Pair("Terminar Percurso", { mapViewModel.completeRoute() })
-        }
-
-        is RouteTrackingState.RouteGenerated -> {
-            Pair("Iniciar Acompanhamento", { checkAndRequestLocationPermissions() })
-        }
-
-        else -> {
-            Pair("Analisar Vibe", { navController.navigate(Routes.MOOD_ANALYSIS) })
+    BackHandler(enabled = isRouteActive) {
+        mapViewModel.clearRoute()
+        if (trackingState is RouteTrackingState.TrackingActive) {
+            navController.popBackStack()
         }
     }
 
-
-    Scaffold(
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { navController.navigate(Routes.MOOD_ANALYSIS) },
-                containerColor = MaterialTheme.colorScheme.primary
-            ) {
-                Icon(Icons.Default.Mood, contentDescription = "Analisar Vibe")
-            }
-        },
-        floatingActionButtonPosition = FabPosition.End
-    ) { padding ->
-
+    Scaffold { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(LightGrayBackground, WhiteBackground),
-                        startY = 0.0f,
-                        endY = 1000.0f
-                    )
-                ),
+                .background(Brush.verticalGradient(listOf(LightGrayBackground, WhiteBackground))),
             contentAlignment = Alignment.TopCenter
         ) {
             Column(
                 modifier = Modifier.fillMaxSize(),
-                horizontalAlignment = Alignment.CenterHorizontally
+                horizontalAlignment = Alignment.CenterHorizontally // CORRIGIDO: Alignment
             ) {
-                // --- Top Bar Personalizada ---
+                // Header
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 32.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween, // CORRIGIDO: Arrangement
+                    verticalAlignment = Alignment.CenterVertically // CORRIGIDO: Alignment
                 ) {
-                    Spacer(modifier = Modifier.size(40.dp))
-                    Image(
-                        painter = painterResource(id = R.drawable.flowpaths_logo),
-                        contentDescription = "Logotipo FlowPaths",
-                        modifier = Modifier.size(100.dp)
-                    )
-                    Icon(
-                        imageVector = Icons.Default.Person,
-                        contentDescription = "Aceder à Área Pessoal",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .shadow(4.dp, CircleShape)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surface)
-                            .clickable { navController.navigate(Routes.PROFILE) }
-                            .padding(8.dp)
-                    )
+                    if (isRouteActive) {
+                        IconButton(
+                            onClick = { mapViewModel.clearRoute(); navController.popBackStack() },
+                            modifier = Modifier.background(Color.White, CircleShape).shadow(2.dp, CircleShape)
+                        ) { Icon(Icons.Default.Close, null, tint = Color.Red) }
+                    } else Spacer(Modifier.size(48.dp))
+
+                    Image(painter = painterResource(R.drawable.flowpaths_logo), null, Modifier.size(50.dp))
+
+                    IconButton(
+                        onClick = { navController.navigate(Routes.PROFILE) },
+                        modifier = Modifier.background(Color.White, CircleShape).shadow(2.dp, CircleShape)
+                    ) { Icon(Icons.Default.Person, null, tint = Color(0xFF00ACC1)) }
                 }
 
-                // --- Cartão do Mapa (ÁREA CRÍTICA) ---
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(horizontal = 24.dp),
-                    shape = RoundedCornerShape(20.dp),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                // Dashboard
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(75.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // SOLUÇÃO AGRESSIVA: Usa `key` para forçar a recriação do GoogleMap quando a rota muda de NULL para OK.
-                    key(currentRoute != null) {
+                    weatherInfo?.let {
+                        Card(modifier = Modifier.weight(0.35f).fillMaxHeight()) {
+                            Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
+                                AsyncImage(it.iconUrl, null, Modifier.size(28.dp))
+                                Text("${it.temp}°C", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    if (isRouteActive) {
+                        Card(modifier = Modifier.weight(0.65f).fillMaxHeight(), colors = CardDefaults.cardColors(containerColor = Color(0xFF1DB954))) {
+                            // CORRIGIDO: Argumentos Row
+                            Row(
+                                modifier = Modifier.fillMaxSize().padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(spotifyState.trackName, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
+                                    Text(if (spotifyState.isPlaying) "A tocar" else "Pausado", color = Color.White.copy(0.8f), fontSize = 10.sp)
+                                }
+                                IconButton(onClick = { mapViewModel.togglePlayPause() }) {
+                                    Icon(if(spotifyState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                // Mapa
+                Surface(
+                    modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    shadowElevation = 8.dp
+                ) {
+                    Box(Modifier.fillMaxSize()) {
                         GoogleMap(
                             modifier = Modifier.fillMaxSize(),
                             cameraPositionState = cameraPositionState,
-                            uiSettings = uiSettings,
-                            // ✅ Camada Híbrida: Satélite + Nomes de Ruas
-                            properties = MapProperties(mapType = MapType.HYBRID)
+                            properties = MapProperties(isMyLocationEnabled = hasLocationPermission, mapType = MapType.HYBRID),
+                            uiSettings = MapUiSettings(zoomControlsEnabled = false, myLocationButtonEnabled = false),
+                            onMapLoaded = { isMapLoaded = true }
                         ) {
+                            approachPolyline?.let { Polyline(points = it, color = Color.Gray, width = 15f, pattern = listOf(Dash(20f), Gap(10f))) }
+                            directionsPolyline?.let { Polyline(points = it, color = Color(0xFF00E5FF), width = 20f) }
 
-                            // 1. 💡 LÓGICA DE MOVIMENTO DA CÂMARA, ZOOM E RASTREAMENTO (BÚSSOLA)
-                            LaunchedEffect(currentRoute, trackingState, userLocation) {
-                                val route = currentRoute
+                            currentRoute?.pontosParagem?.forEachIndexed { index, ponto ->
+                                val icon = if (index == nextWaypointIndex) BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN) else BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE)
 
-                                // Variaveis para a nova posição (usamos o estado atual como base)
-                                var target = cameraPositionState.position.target
-                                var zoom = cameraPositionState.position.zoom
-                                var tilt = cameraPositionState.position.tilt
-                                var bearing = cameraPositionState.position.bearing // Rumo atual
-
-                                // Priority 1: Tracking Ativo (Zoom apertado, rotação, inclinação - Modo Navegação)
-                                if (trackingState is RouteTrackingState.TrackingActive && userLocation != null) {
-
-                                    // ⚠️ CORREÇÃO: Ignorar a localização fictícia (Mountain View)
-                                    if (userLocation!!.latitude != mountainViewLocation.latitude || userLocation!!.longitude != mountainViewLocation.longitude) {
-                                        target = LatLng(
-                                            userLocation!!.latitude,
-                                            userLocation!!.longitude
-                                        )
-                                    } else if (route != null) {
-                                        // Se ainda estiver a receber MV, e tiver uma rota válida, usa a rota como foco.
-                                        target = LatLng(
-                                            route.pontosChave.first().latitude,
-                                            route.pontosChave.first().longitude
-                                        )
-                                    }
-
-                                    zoom = 18f // Zoom de navegação apertado (como no Google Maps)
-                                    tilt = 60f  // Inclinação para a vista 3D
-                                    // ✅ USAR O BEARING REAL DO GPS PARA ROTAÇÃO DA CÂMARA
-                                    bearing = userLocation!!.bearing
-
-                                    Log.d(
-                                        "MAP_ROUTE_CHECK",
-                                        "CÂMARA: Rastreamento ativo, zoom/rotação no utilizador. Bearing: ${userLocation!!.bearing}"
-                                    )
-
-                                    // Priority 2: Rota Gerada (Zoom para mostrar todo o percurso - Visualização 2D)
-                                } else if (route != null) {
-                                    val firstPoint = route.pontosChave.firstOrNull()
-                                    if (firstPoint != null) {
-                                        target = LatLng(firstPoint.latitude, firstPoint.longitude)
-                                        zoom = 14f // Zoom para ver o percurso
-                                        tilt = 0f   // Volta à vista de cima (2D)
-                                        bearing = 0f // Volta ao Norte
-                                        Log.d(
-                                            "MAP_ROUTE_CHECK",
-                                            "CÂMARA: Rota gerada, movendo para o ponto de partida (Vista Geral)."
-                                        )
-                                    }
-                                } else {
-                                    Log.d(
-                                        "MAP_ROUTE_CHECK",
-                                        "CÂMARA: Estado inicial/limpo, sem movimento forçado."
-                                    )
-                                    return@LaunchedEffect // Sair se não houver rota/rastreamento
-                                }
-
-                                cameraPositionState.animate(
-                                    update = CameraUpdateFactory.newCameraPosition(
-                                        CameraPosition.Builder()
-                                            .target(target)
-                                            .zoom(zoom)
-                                            .tilt(tilt)
-                                            .bearing(bearing)
-                                            .build()
-                                    ),
-                                    durationMs = 800 // Animação suave
-                                )
-                            }
-
-                            // 2. DESENHO DOS MARCADORES E DA ROTA (Polyline)
-                            currentRoute?.pontosChave?.let { pontos ->
-                                Log.d(
-                                    "MAP_ROUTE_CHECK",
-                                    "✅ DESENHO INICIADO: ${pontos.size} marcadores e Polyline."
-                                )
-
-                                val pathPoints = pontos.map { LatLng(it.latitude, it.longitude) }
-
-                                pathPoints.forEachIndexed { index, latLng ->
-                                    Marker(
-                                        state = MarkerState(position = latLng),
-                                        title = pontos[index].nome ?: "Ponto ${index + 1}",
-                                        snippet = currentRoute?.tipoPercurso ?: ""
-                                    )
-                                }
-
-                                if (pathPoints.size >= 2) {
-                                    Polyline(
-                                        points = pathPoints,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        width = 10f
-                                    )
-                                    Log.d("MAP_ROUTE_CHECK", "Polyline desenhada com sucesso.")
-                                }
-                            }
-
-                            // 3. MARCADOR DE LOCALIZAÇÃO DO UTILIZADOR (Ícone de navegação)
-                            userLocation?.let { location ->
-                                // O ícone de navegação só precisa de ser um marcador simples no Compose Maps.
+                                // CORRIGIDO: MarkerState tipado
                                 Marker(
-                                    state = MarkerState(
-                                        position = LatLng(
-                                            location.latitude,
-                                            location.longitude
-                                        )
-                                    ),
-                                    title = "A sua localização",
-                                    snippet = if (trackingState is RouteTrackingState.TrackingActive) "Rastreamento Ativo" else "GPS Ativo",
+                                    state = MarkerState(position = LatLng(ponto.latitude, ponto.longitude)),
+                                    title = ponto.nome,
+                                    icon = icon
                                 )
-                                LaunchedEffect(location) {
-                                    Log.d(
-                                        "LOCATION_UI",
-                                        "A localização do utilizador atualizou a UI: Lat=${location.latitude}"
-                                    )
+                            }
+                        }
+
+                        // Navegação
+                        if (trackingState is RouteTrackingState.TrackingActive && navInstruction != null) {
+                            Card(
+                                modifier = Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth(0.9f),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF263238).copy(0.9f))
+                            ) {
+                                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Navigation, null, tint = Color.White)
+                                    Spacer(Modifier.width(12.dp))
+                                    Text(navInstruction!!, color = Color.White, fontWeight = FontWeight.Bold)
                                 }
                             }
-                        } // Fim GoogleMap
-                    } // Fim key()
+                        }
+
+                        // Timer
+                        if (timerSeconds > 0) {
+                            Box(modifier = Modifier.align(Alignment.Center).size(160.dp).background(Color.Black.copy(0.7f), CircleShape).border(4.dp, Color(0xFF00E5FF), CircleShape), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(progress = { if (totalTime > 0) timerSeconds.toFloat() / totalTime.toFloat() else 0f }, modifier = Modifier.fillMaxSize(), color = Color(0xFF00E5FF), strokeWidth = 8.dp)
+                                Text(formatSeconds(timerSeconds), color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        FloatingActionButton(onClick = { isFollowingUser = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp), containerColor = Color.White) {
+                            Icon(Icons.Default.MyLocation, null, tint = Color(0xFF00ACC1))
+                        }
+                    }
                 }
 
-                // --- Botão Principal de Ação (não alterado) ---
-                Button(
-                    onClick = buttonAction,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 24.dp)
-                        .height(56.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
-                    contentPadding = PaddingValues()
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                brush = Brush.horizontalGradient(
-                                    colors = listOf(Color(0xFFFF8A65), Color(0xFFFF5722))
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.Hiking,
-                                contentDescription = null,
-                                tint = Color.White
-                            )
-                            Spacer(modifier = Modifier.size(8.dp))
-                            Text(
-                                text = buttonText,
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                        }
+                // Botão Inferior
+                Box(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
+                    val (label, icon, action) = when (trackingState) {
+                        is RouteTrackingState.TrackingActive -> Triple("Concluir", Icons.Default.Flag, { mapViewModel.completeRoute(); navController.navigate(Routes.ROUTE_SUMMARY) })
+                        // CORRIGIDO: startRouteTracking
+                        is RouteTrackingState.RouteGenerated -> Triple("Iniciar", Icons.Default.PlayArrow, { mapViewModel.startRouteTracking(); isFollowingUser = true })
+                        else -> Triple("Analisar Humor", Icons.Default.Mood, { navController.navigate(Routes.MOOD_ANALYSIS) })
+                    }
+                    Button(onClick = action, modifier = Modifier.fillMaxWidth().height(56.dp), shape = CircleShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5722))) {
+                        Icon(icon, null); Spacer(Modifier.width(8.dp)); Text(label, fontWeight = FontWeight.Bold)
                     }
                 }
             }
         }
+
+        // Popup de Desafio
+        if (activeChallenge != null && timerSeconds == 0) {
+            ChallengePopupOverlay(
+                desafio = activeChallenge!!,
+                isRecording = isRecording,
+                onDismiss = { if (!isRecording) mapViewModel.dismissChallenge() },
+                onAccept = {
+                    when (activeChallenge!!.tipo) {
+                        TipoDesafio.FOTO -> cameraLauncher.launch(null)
+                        TipoDesafio.AUDIO -> {
+                            if (!isRecording) {
+                                mapViewModel.startInternalRecording()
+                                isRecording = true
+                            } else {
+                                mapViewModel.stopInternalRecordingAndUpload()
+                                isRecording = false
+                            }
+                        }
+                        else -> {
+                            if (activeChallenge!!.duracaoSegundos > 0) mapViewModel.startChallengeTimer(activeChallenge!!)
+                            else mapViewModel.completeActiveChallengeNoMedia()
+                        }
+                    }
+                }
+            )
+        }
     }
+}
+
+fun formatSeconds(seconds: Int): String = "%02d:%02d".format(seconds / 60, seconds % 60)
+
+@Composable
+fun ChallengePopupOverlay(
+    desafio: DesafioBemEstar,
+    isRecording: Boolean,
+    onDismiss: () -> Unit,
+    onAccept: () -> Unit
+) {
+    val icon = when (desafio.tipo) {
+        TipoDesafio.FOTO -> Icons.Default.CameraAlt
+        TipoDesafio.AUDIO -> Icons.Default.Mic
+        else -> Icons.Default.Star
+    }
+
+    val buttonText = when (desafio.tipo) {
+        TipoDesafio.FOTO -> "Tirar Foto"
+        TipoDesafio.AUDIO -> if (isRecording) "Parar e Enviar" else "Gravar Áudio"
+        else -> if (desafio.duracaoSegundos > 0) "Começar (${desafio.duracaoSegundos}s)" else "Concluir"
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("🎯 Desafio: ${desafio.focoPsicologico}") },
+        text = {
+            Column {
+                Text(desafio.instrucao)
+                if (isRecording) {
+                    Spacer(Modifier.height(16.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val infiniteTransition = rememberInfiniteTransition(label = "")
+                        val alpha by infiniteTransition.animateFloat(initialValue = 1f, targetValue = 0.2f, animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "")
+                        Box(Modifier.size(12.dp).clip(CircleShape).background(Color.Red.copy(alpha)))
+                        Spacer(Modifier.width(8.dp))
+                        Text("A GRAVAR...", color = Color.Red, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onAccept,
+                colors = ButtonDefaults.buttonColors(containerColor = if (isRecording) Color.Red else MaterialTheme.colorScheme.primary)
+            ) { Text(buttonText) }
+        },
+        dismissButton = {
+            if (!isRecording) {
+                TextButton(onClick = onDismiss) { Text("Ignorar") }
+            }
+        }
+    )
 }

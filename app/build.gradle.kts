@@ -1,9 +1,10 @@
+import org.gradle.kotlin.dsl.implementation
 import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     kotlin("plugin.serialization")
-    id("org.jetbrains.kotlin.plugin.compose") version "2.2.20"
+    id("org.jetbrains.kotlin.plugin.compose") version "2.2.20" // NOTA: Considera atualizar isto se o Kotlin/Compose der erros
 }
 
 android {
@@ -35,9 +36,18 @@ android {
             "\"${properties.getProperty("supabase.url") ?: ""}\"")
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY",
             "\"${properties.getProperty("supabase.publishable_key") ?: ""}\"")
-        buildConfigField("String", "GEMINI_API_KEY",
-            "\"${properties.getProperty("google.gemini.key") ?: ""}\"")
-        manifestPlaceholders["GOOGLE_MAPS_KEY"] = properties.getProperty("google.maps.key") ?: ""
+
+        buildConfigField("String", "CLOUD_API_KEY",
+            "\"${properties.getProperty("google.cloud.key") ?: ""}\"")
+        buildConfigField("String", "SPOTIFY_CLIENT_ID", "\"${properties.getProperty("spotify.client.id")}\"")
+        buildConfigField("String", "SPOTIFY_CLIENT_SECRET", "\"${properties.getProperty("spotify.client.secret")}\"")
+
+        buildConfigField("String", "OPENWEATHER_API_KEY",
+            "\"${properties.getProperty("openweather.api.key") ?: ""}\"")
+
+        manifestPlaceholders["GOOGLE_MAPS_KEY"] = properties.getProperty("google.cloud.key") ?: ""
+        manifestPlaceholders["redirectSchemeName"] = "com.example.flowpaths"
+        manifestPlaceholders["redirectHostName"] = "callback"
     }
 
     buildTypes {
@@ -76,21 +86,41 @@ dependencies {
 
     implementation("androidx.core:core-splashscreen:1.0.1")
 
-    implementation("io.ktor:ktor-client-okhttp")      // Para o Gemini
+    implementation(platform("io.ktor:ktor-bom:2.3.12"))
+    implementation("io.ktor:ktor-client-core")
+    implementation("io.ktor:ktor-client-okhttp")
+    implementation("io.ktor:ktor-client-content-negotiation")
+    implementation("io.ktor:ktor-serialization-kotlinx-json")
     implementation("io.ktor:ktor-client-logging")
-    //implementation("io.ktor:ktor-client-cio")    // Para corrigir o crash
-    implementation("io.ktor:ktor-serialization-kotlinx-json") // Se ainda for necessário
+    implementation("io.ktor:ktor-client-encoding")
 
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0") // Ou 1.8.1
+
+    // -----------------------------------------------------------------
+    // ‼️ INÍCIO DA CORREÇÃO SUPABASE ‼️
+    // -----------------------------------------------------------------
+
+    // Define uma versão única para todas as bibliotecas Supabase
+    // (Esta é a versão que aparecia no teu erro, por isso é a mais recente que tens)
     implementation(platform(libs.supabase.bom))
-    implementation(libs.supabase.auth)
-    implementation(libs.supabase.postgrest)
-    implementation(libs.supabase.storage)
-    implementation(libs.supabase.realtime)
-    implementation(libs.supabase.functions)
 
-    // Dependência Gemini/API de IA — ajuste para artefacto válido ou remover até encontrar a versão correta
-    // implementation("com.google.ai.client.kotlin:google-ai-client-kotlin:1.1.1")
-    implementation("com.google.ai.client.generativeai:generativeai:0.8.0") // Exemplo de versão válida :contentReference[oaicite:1]{index=1}
+    // ‼️ IMPORTANTE: Importa as bibliotecas com o sufixo '-android'
+    // Isto resolve o teu problema de 'handleDeepLink' e 'signInWith(context)'
+    implementation("io.github.jan-tennert.supabase:gotrue-kt")
+    implementation("io.github.jan-tennert.supabase:postgrest-kt")
+    implementation("io.github.jan-tennert.supabase:storage-kt")
+    implementation("io.github.jan-tennert.supabase:realtime-kt")
+    implementation("io.github.jan-tennert.supabase:functions-kt")
+
+    // -----------------------------------------------------------------
+    // ‼️ FIM DA CORREÇÃO SUPABASE ‼️
+    // -----------------------------------------------------------------
+
+
+    // Dependência Gemini
+    implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
 
     implementation("io.insert-koin:koin-androidx-compose:3.4.6")
     implementation("androidx.navigation:navigation-compose:2.7.5")
@@ -99,34 +129,23 @@ dependencies {
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
-//    implementation("io.ktor:ktor-client-core:3.0.0")
-//    implementation("io.ktor:ktor-client-okhttp:3.0.0")
-//    implementation("io.ktor:ktor-client-logging:3.0.0")
-//    implementation("io.ktor:ktor-client-content-negotiation:3.0.0")
-//    //implementation("io.ktor:ktor-client-timeout:3.0.0") // ✅ nome novo
-//    implementation(project(":gemini-ktor3-compat"))
-//    implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.0")
-
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
+    implementation("com.google.maps.android:android-maps-utils:3.9.0")
     implementation("com.google.maps.android:maps-compose:4.4.1")
     implementation("com.google.android.gms:play-services-maps:18.2.0")
 
+    implementation(files("libs/spotify-app-remote-release-0.8.0.aar"))
+    implementation( files("libs/spotify-auth-release-2.1.0.aar"))
+    implementation("com.google.code.gson:gson:2.10.1")
+
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("io.coil-kt:coil-svg:2.6.0")
-}
-
-configurations.all {
-    resolutionStrategy {
-        force(
-            "io.ktor:ktor-client-core:2.3.7",
-            "io.ktor:ktor-client-okhttp:2.3.7",
-            "io.ktor:ktor-client-logging:2.3.7",
-            "io.ktor:ktor-serialization-kotlinx-json:2.3.7"
-        )
-    }
 }

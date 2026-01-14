@@ -63,7 +63,7 @@ fun ProfileScreen(
     LaunchedEffect(authState) {
         if (authState is AuthState.LoggedOut) {
             // Navega para auth e limpa toda a pilha
-            navController.navigate(Routes.AUTH_SCREEN) {
+            navController.navigate(Routes.PUBLIC_HOME) {
                 popUpTo(navController.graph.id) {
                     inclusive = true
                 }

@@ -3,8 +3,8 @@ agp = "8.13.0"
 
 # A versão da supabase foi atualizada
 # **CORREÇÃO**: Use a versão BETA 3.0.0-beta-3 que usa Ktor 3.x
-supabase = "2.3.0"
-supabase-bom = "2.3.0"
+supabase = "3.0.2"
+supabase-bom = "2.6.1"
 kotlin = "2.2.20"
 coreKtx = "1.17.0"
 junit = "4.13.2"
