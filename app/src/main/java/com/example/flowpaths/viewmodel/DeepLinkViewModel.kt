@@ -1,4 +1,4 @@
-package com.example.flowpaths.ui.viewmodel
+package com.example.flowpaths.viewmodel
 
 import androidx.lifecycle.ViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow

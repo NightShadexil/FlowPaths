@@ -10,11 +10,12 @@ import com.example.flowpaths.data.remote.SpotifyService
 import com.example.flowpaths.data.remote.WeatherService
 import com.example.flowpaths.data.repository.RouteRepository
 import com.example.flowpaths.ui.auth.AuthViewModel
-import com.example.flowpaths.ui.viewmodel.DeepLinkViewModel
+import com.example.flowpaths.viewmodel.DeepLinkViewModel
 import com.example.flowpaths.viewmodel.MapViewModel
 import com.example.flowpaths.viewmodel.MoodViewModel
 import com.example.flowpaths.viewmodel.ProfileViewModel
 import com.example.flowpaths.viewmodel.SessionViewModel
+import com.example.flowpaths.viewmodel.TimerViewModel
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
@@ -73,6 +74,8 @@ val appModule = module {
             locationManager = get()
         )
     }
+
+    viewModel { TimerViewModel() }
 
     // ✅ MapViewModel injetado corretamente com HttpClient
     single {

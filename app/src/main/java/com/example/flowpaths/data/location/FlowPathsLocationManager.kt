@@ -55,9 +55,15 @@ class FlowPathsLocationManager(
         }
     }
 
+    private var isStarted = false
+
     @SuppressLint("MissingPermission") // A permissão é verificada no MainScreen
     fun startLocationUpdates() {
-        Log.d("LOCATION", "A iniciar FusedLocationProviderClient updates.")
+        if (isStarted) {
+            Log.d("LOCATION", "startLocationUpdates ignorado (já ativo).")
+            return
+        }
+        isStarted = true
 
         locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, TimeUnit.SECONDS.toMillis(5))
             .setWaitForAccurateLocation(true)
@@ -77,6 +83,7 @@ class FlowPathsLocationManager(
 
     fun stopLocationUpdates() {
         Log.d("LOCATION", "A parar FusedLocationProviderClient updates.")
+        isStarted = false
         fusedLocationClient.removeLocationUpdates(locationCallback)
     }
 }
