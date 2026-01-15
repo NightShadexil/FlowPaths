@@ -208,6 +208,21 @@ class MapViewModel(
 
         // ✅ só pede approach directions quando tracking está ativo
         if (_trackingState.value is RouteTrackingState.TrackingActive) {
+            if (isApproachingStart && navigationSteps.isEmpty()) {
+                val route = _currentRoute.value
+                val start = route?.pontosParagem?.firstOrNull()
+                if (start != null) {
+                    val dist = distanceBetweenPoints(
+                        userLocation.latitude, userLocation.longitude,
+                        start.latitude, start.longitude
+                    ).toInt()
+                    // só sobrescreve se estiver preso em "A traçar..."
+                    if (_navigationInstruction.value == null || _navigationInstruction.value!!.contains("traçar", ignoreCase = true)) {
+                        _navigationInstruction.value = "Segue para o início (${dist} m)"
+                    }
+                }
+            }
+
             requestApproachDirectionsIfNeeded(userLocation)
 
             val userLatLng = LatLng(userLocation.latitude, userLocation.longitude)
@@ -808,6 +823,28 @@ class MapViewModel(
         if (_trackingState.value !is RouteTrackingState.TrackingActive) return
         if (!isApproachingStart) return
 
+        val startPoint = route.pontosParagem.firstOrNull() ?: run {
+            Log.e(TAG, "❌ requestApproachDirectionsIfNeeded: sem pontosParagem")
+            _navigationInstruction.value = "Erro: rota sem pontos."
+            return
+        }
+
+        // ✅ 0) Se já estás no início, não peças directions de approach
+        val startLoc = Location("start").apply {
+            latitude = startPoint.latitude
+            longitude = startPoint.longitude
+        }
+        val distToStart = userLoc.distanceTo(startLoc)
+        if (distToStart < 20f) {
+            Log.d(TAG, "✅ Já estou no início (dist=${distToStart.toInt()}m). A saltar approach directions.")
+            isApproachingStart = false
+            _approachPolyline.value = null
+            _navigationInstruction.value = "No ponto de partida!"
+            onReachedRouteStart(userLoc)
+            fetchMainRouteStepsAgain(route) // pede steps do percurso principal
+            return
+        }
+
         // Já temos algo? então não pede outra vez
         val alreadyHaveSteps = navigationSteps.isNotEmpty()
         val alreadyHavePolyline = _approachPolyline.value?.isNotEmpty() == true
@@ -818,14 +855,11 @@ class MapViewModel(
         if (isFetchingApproachDirections) return
         if (now - lastApproachRequestAt < APPROACH_RETRY_MS) return
 
-        val startPoint = route.pontosParagem.firstOrNull() ?: run {
-            Log.e(TAG, "❌ requestApproachDirectionsIfNeeded: sem pontosParagem")
-            _navigationInstruction.value = "Erro: rota sem pontos."
-            return
-        }
-
         isFetchingApproachDirections = true
         lastApproachRequestAt = now
+
+        // (opcional) Atualiza a UI para indicar que está a pedir
+        _navigationInstruction.value = "A traçar direções…"
 
         Log.d(
             TAG,
@@ -834,34 +868,58 @@ class MapViewModel(
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val resp = fetchDirectionsFullResponse(
-                    origin = "${userLoc.latitude},${userLoc.longitude}",
-                    dest = "${startPoint.latitude},${startPoint.longitude}"
-                )
+                val resp = withTimeout(15_000L) {
+                    fetchDirectionsFullResponse(
+                        origin = "${userLoc.latitude},${userLoc.longitude}",
+                        dest = "${startPoint.latitude},${startPoint.longitude}"
+                    )
+                }
 
+                // ✅ CONTEXTO DO SNIPPET: é AQUI (logo após receber resp)
                 val r = resp.routes.firstOrNull()
-                val overview = r?.overviewPolyline?.points
-                val legs = r?.legs
+                if (r == null) {
+                    Log.w(TAG, "⚠️ Directions approach: routes vazias (sem rota)")
+                    withContext(Dispatchers.Main) {
+                        // 🔥 isto impede ficar preso em "A traçar direções..."
+                        _navigationInstruction.value = "Sem rota do Google. A navegar por distância…"
+                        updateNavigationLogic(userLoc)
+                    }
+                    return@launch
+                }
+
+                val overview = r.overviewPolyline.points
+                val legs = r.legs
 
                 withContext(Dispatchers.Main) {
-                    if (!overview.isNullOrEmpty()) {
+                    if (overview.isNotEmpty()) {
                         _approachPolyline.value = decodePolyline(overview)
                     }
 
                     if (!legs.isNullOrEmpty()) {
                         navigationSteps = legs.flatMap { it.steps }
                         _currentStepIndex.value = 0
+
+                        // ✅ isto muda a instruction para o 1º step (e deixa de estar presa)
                         updateNavigationLogic(userLoc)
+
                         Log.d(TAG, "✅ Directions OK (approach). steps=${navigationSteps.size}")
                     } else {
+                        Log.w(TAG, "⚠️ Directions approach: legs vazios")
                         _navigationInstruction.value = "Siga em frente até ao início."
-                        Log.w(TAG, "⚠️ Directions: legs vazios (approach)")
+                        updateNavigationLogic(userLoc)
                     }
+                }
+
+            } catch (e: TimeoutCancellationException) {
+                Log.e(TAG, "⏱️ Directions approach TIMEOUT", e)
+                withContext(Dispatchers.Main) {
+                    _navigationInstruction.value = "Sem resposta do Google. A navegar por distância…"
+                    updateNavigationLogic(userLoc)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Directions approach falhou", e)
                 withContext(Dispatchers.Main) {
-                    _navigationInstruction.value = "Siga em frente até ao início."
+                    _navigationInstruction.value = "Erro a obter direções. A navegar por distância…"
                     updateNavigationLogic(userLoc)
                 }
             } finally {
@@ -871,19 +929,23 @@ class MapViewModel(
     }
 
 
-    private suspend fun fetchDirectionsFullResponse(
-        origin: String,
-        dest: String,
-        waypoints: String = ""
-    ): DirectionsResponseLocal {
-        return httpClient.get("https://maps.googleapis.com/maps/api/directions/json") {
+
+    private suspend fun fetchDirectionsFullResponse(origin: String, dest: String, waypoints: String = ""): DirectionsResponseLocal {
+        Log.d(TAG, "🌐 fetchDirectionsFullResponse() a iniciar origin=$origin dest=$dest")
+
+        val resp = httpClient.get("https://maps.googleapis.com/maps/api/directions/json") {
             parameter("origin", origin)
             parameter("destination", dest)
             if (waypoints.isNotEmpty()) parameter("waypoints", waypoints)
             parameter("mode", "walking")
             parameter("key", BuildConfig.CLOUD_API_KEY)
             parameter("language", "pt-PT")
-        }.body()
+        }
+
+        Log.d(TAG, "🌐 fetchDirectionsFullResponse() HTTP status=${resp.status}")
+        val body = resp.body<DirectionsResponseLocal>()
+        Log.d(TAG, "🌐 fetchDirectionsFullResponse() parse OK routes=${body.routes.size}")
+        return body
     }
 
     private fun fetchMainRouteStepsAgain(route: PercursoRecomendado) {
@@ -956,6 +1018,59 @@ class MapViewModel(
                 }
         }
     }
+
+    private fun onReachedRouteStart(userLoc: Location) {
+        val route = _currentRoute.value ?: return
+
+        isApproachingStart = false
+        _approachPolyline.value = null
+
+        // ✅ garante que o percurso começa no waypoint 0
+        _nextWaypointIndex.value = 0
+
+        // ✅ força steps do percurso principal (sem depender de approach)
+        fetchMainRouteStepsAgain(route)
+
+        // ✅ tenta disparar desafio imediatamente (se houver um perto)
+        tryTriggerChallenge(userLoc)
+
+        // ✅ se não disparou desafio, pelo menos diz o próximo ponto
+        if (_activeChallenge.value == null) {
+            val next = route.pontosParagem.getOrNull(_nextWaypointIndex.value)
+            _navigationInstruction.value = next?.let {
+                "Início da rota! Segue para: ${it.nome}"
+            } ?: "Início da rota! Segue em frente."
+        }
+    }
+
+    /** dispara o desafio mais próximo dentro do raio */
+    private fun tryTriggerChallenge(userLoc: Location) {
+        if (_activeChallenge.value != null || _isChallengeInProgress.value) return
+
+        val candidates = _routeChallenges.value
+            .filter { it.statusConclusao != "CONCLUIDO" && it.statusConclusao != "IGNORADO" }
+
+        for (d in candidates) {
+            val lat = d.latitude ?: continue
+            val lon = d.longitude ?: continue
+
+            val target = Location("challenge").apply {
+                latitude = lat
+                longitude = lon
+            }
+
+            if (userLoc.distanceTo(target) < currentGeofenceRadius) {
+                _activeChallenge.value = d
+                _isChallengeInProgress.value = true
+
+                // ✅ dá uma instrução imediata (o popup vai abrir pelo MainScreen)
+                _navigationInstruction.value = "Desafio disponível: ${d.focoPsicologico}"
+                Log.d(TAG, "🎯 Desafio disparado no início: ${d.id}")
+                return
+            }
+        }
+    }
+
 
     // =====================================================================
     // SPOTIFY

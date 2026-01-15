@@ -20,6 +20,8 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.logging.LogLevel
+import io.ktor.client.plugins.logging.Logging
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import org.koin.android.ext.koin.androidApplication
@@ -44,6 +46,10 @@ val appModule = module {
                 requestTimeoutMillis = 30000
                 connectTimeoutMillis = 30000
                 socketTimeoutMillis = 30000
+            }
+
+            install(Logging) {
+                level = LogLevel.INFO
             }
         }
     }

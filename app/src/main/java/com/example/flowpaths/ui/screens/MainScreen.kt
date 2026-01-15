@@ -211,13 +211,30 @@ fun MainScreen(navController: NavController) {
     var hasCenteredOnUser by remember { mutableStateOf(false) }
     var isMapLoaded by remember { mutableStateOf(false) }
 
+    // ✅ ADD: flag para distinguir gesto vs animação tua
+    var programmaticMove by remember { mutableStateOf(false) }
+
+    // ✅ ADD: este LaunchedEffect entra AQUI
+    LaunchedEffect(trackingState, userLocation, isMapLoaded) {
+        if (isMapLoaded && trackingState is RouteTrackingState.TrackingActive) {
+            userLocation?.let { loc ->
+                programmaticMove = true
+                cameraPositionState.move(
+                    CameraUpdateFactory.newLatLngZoom(LatLng(loc.latitude, loc.longitude), 18f)
+                )
+            }
+        }
+    }
+
+    // ✅ ALTERA o teu listener que desligava follow
     LaunchedEffect(cameraPositionState.isMoving) {
-        if (cameraPositionState.isMoving &&
-            isFollowingUser &&
-            cameraPositionState.cameraMoveStartedReason == CameraMoveStartedReason.GESTURE
-        ) {
-            Log.d("MainScreen", "🖐️ Gesto do utilizador -> follow GPS OFF")
-            isFollowingUser = false
+        if (!cameraPositionState.isMoving) {
+            programmaticMove = false
+        } else {
+            if (isFollowingUser && !programmaticMove) {
+                Log.d("MainScreen", "🖐️ Gesto do utilizador -> follow GPS OFF")
+                isFollowingUser = false
+            }
         }
     }
 
@@ -235,6 +252,7 @@ fun MainScreen(navController: NavController) {
                 delay(100)
                 val builder = LatLngBounds.builder()
                 directionsPolyline!!.forEach { builder.include(it) }
+                programmaticMove = true
                 cameraPositionState.animate(
                     CameraUpdateFactory.newLatLngBounds(builder.build(), 200),
                     1500
@@ -262,6 +280,7 @@ fun MainScreen(navController: NavController) {
             }
 
             if (isFollowingUser) {
+                programmaticMove = true
                 cameraPositionState.animate(
                     CameraUpdateFactory.newLatLngZoom(LatLng(loc.latitude, loc.longitude), 18f),
                     500
